@@ -10,7 +10,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@overshoot/sdk": "^0.1.0-alpha.2",
     "axios": "^1.13.2",
+    "dotenv": "^17.2.3",
     "framer-motion": "^12.23.24",
     "lucide-react": "^0.553.0",
     "react": "^19.1.1",

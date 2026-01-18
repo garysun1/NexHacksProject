@@ -18,7 +18,8 @@ export function clearOvershootApiKey() {
   localStorage.removeItem(STORAGE_KEY);
 }
 
-export function createRealtimeVision({ onResult, prompt = 'Read any visible text' } = {}) {
+// 1. FIXED: Added 'onError' to this list so it is defined
+export function createRealtimeVision({ onResult, onError, prompt = 'Read any visible text' } = {}) {
   const apiKey = getOvershootApiKey();
   if (!apiKey) throw new Error('Missing Overshoot API key.');
 
@@ -27,12 +28,13 @@ export function createRealtimeVision({ onResult, prompt = 'Read any visible text
     apiKey,
     prompt,
     onResult,
+    onError,
     source: { type: 'camera', cameraFacing: 'environment' },
     processing: {
       clip_length_seconds: 1,
-      delay_seconds: 1,
-      fps: 30,
-      sampling_ratio: 0.1,
+      delay_seconds: 5,
+      fps: 5,
+      sampling_ratio: 1.0,
     },
   });
 }

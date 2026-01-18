@@ -12,8 +12,12 @@ function stringify(x) {
 
 export default function App() {
   const videoRef = useRef(null);
+
   const previewStreamRef = useRef(null);
   const visionRef = useRef(null);
+
+  const originalGetUserMediaRef = useRef(null);
+  const patchedRef = useRef(false);
 
   const [status, setStatus] = useState('Ready');
   const [latestText, setLatestText] = useState('');
@@ -22,52 +26,90 @@ export default function App() {
   function addLog(...args) {
     const line = args.map(stringify).join(' ');
     setLogs((prev) => (prev ? `${prev}\n${line}` : line));
-    // keep console too
     console.log(...args);
   }
 
-  async function ensurePreviewStream() {
-    if (!navigator.mediaDevices?.getUserMedia) {
+  async function ensureScreenStream() {
+    if (!navigator.mediaDevices?.getDisplayMedia) {
       throw new Error(
-        'Camera API not available. Open this in a browser on http://localhost (not Node).'
+        'Screen capture API not available. Use a modern browser and run on https:// or http://localhost.'
       );
     }
     if (previewStreamRef.current) return previewStreamRef.current;
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: false
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        frameRate: 30,
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+      audio: false,
     });
+
     previewStreamRef.current = stream;
 
     if (videoRef.current) {
       videoRef.current.srcObject = stream;
     }
+
+    const [track] = stream.getVideoTracks();
+    track?.addEventListener('ended', () => {
+      stop().catch(() => {});
+    });
+
     return stream;
+  }
+
+  function patchGetUserMediaToReturn(stream) {
+    if (patchedRef.current) return;
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('navigator.mediaDevices.getUserMedia is not available.');
+    }
+
+    originalGetUserMediaRef.current = navigator.mediaDevices.getUserMedia.bind(
+      navigator.mediaDevices
+    );
+
+    navigator.mediaDevices.getUserMedia = async () => {
+      return stream;
+    };
+
+    patchedRef.current = true;
+    addLog('Patched getUserMedia(): Overshoot camera will use screen share stream.');
+  }
+
+  function restoreGetUserMedia() {
+    if (!patchedRef.current) return;
+    if (originalGetUserMediaRef.current) {
+      navigator.mediaDevices.getUserMedia = originalGetUserMediaRef.current;
+    }
+    originalGetUserMediaRef.current = null;
+    patchedRef.current = false;
+    addLog('Restored original getUserMedia().');
   }
 
   async function start() {
     try {
-      setStatus('Requesting camera permission…');
-      await ensurePreviewStream();
+      setStatus('Requesting screen share permission…');
+      const screenStream = await ensureScreenStream();
+
+      patchGetUserMediaToReturn(screenStream);
 
       setStatus('Starting RealtimeVision…');
       addLog('Starting RealtimeVision…');
 
       const vision = createRealtimeVision({
-        prompt: 'Read any visible text',
+        prompt: 'Describe what is happening on screen in one short sentence.',
         onResult: (result) => {
-          // Log full payload so you can see the structure
           addLog('onResult:', result);
+
           if (result && typeof result === 'object' && 'result' in result) {
-            addLog('text:', result.result);
-            if (typeof result.result === 'string') {
-              setLatestText(result.result);
-            } else {
-              setLatestText(stringify(result.result));
-            }
+            const out = result.result;
+            addLog('text:', out);
+            setLatestText(typeof out === 'string' ? out : stringify(out));
           }
-        }
+        },
       });
 
       visionRef.current = vision;
@@ -78,19 +120,20 @@ export default function App() {
     } catch (err) {
       setStatus('Error (see logs)');
       addLog('ERROR:', err?.stack || err);
+      restoreGetUserMedia();
     }
   }
 
   async function stop() {
     try {
       setStatus('Stopping…');
+
       if (visionRef.current) {
         await visionRef.current.stop();
         visionRef.current = null;
         addLog('RealtimeVision stopped.');
       }
 
-      // Stop preview stream too (optional)
       if (previewStreamRef.current) {
         previewStreamRef.current.getTracks().forEach((t) => t.stop());
         previewStreamRef.current = null;
@@ -99,18 +142,19 @@ export default function App() {
         videoRef.current.srcObject = null;
       }
 
+      restoreGetUserMedia();
+
       setStatus('Stopped');
     } catch (err) {
       setStatus('Stop error (see logs)');
       addLog('STOP ERROR:', err?.stack || err);
+      restoreGetUserMedia();
     }
   }
 
-  // Cleanup on page refresh / HMR / unmount
   useEffect(() => {
     return () => {
       if (visionRef.current) {
-        // best-effort stop
         visionRef.current.stop().catch(() => {});
         visionRef.current = null;
       }
@@ -118,12 +162,13 @@ export default function App() {
         previewStreamRef.current.getTracks().forEach((t) => t.stop());
         previewStreamRef.current = null;
       }
+      restoreGetUserMedia();
     };
   }, []);
 
   return (
     <div className="page">
-      <h1>Realtime Vision Demo</h1>
+      <h1>Realtime Vision Demo (Screen)</h1>
       <p className="status">
         Status: <strong>{status}</strong>
       </p>
@@ -138,7 +183,10 @@ export default function App() {
         <textarea
           className="outputBox"
           readOnly
-          value={latestText || 'No output yet. Click Start and point the camera at some text.'}
+          value={
+            latestText ||
+            'No output yet. Click Start and share a screen/window/tab.'
+          }
         />
       </div>
 
